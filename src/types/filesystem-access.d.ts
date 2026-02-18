@@ -36,4 +36,7 @@ interface DataTransferItem {
 
 interface Window {
   showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>;
+  showOpenFilePicker?: (options?: {
+    multiple?: boolean;
+  }) => Promise<FileSystemFileHandle[]>;
 }

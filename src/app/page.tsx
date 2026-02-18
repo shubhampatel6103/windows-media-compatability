@@ -11,7 +11,7 @@ type ProcessStatus = "idle" | "working" | "done" | "error";
 
 type ProcessItem = {
   fileHandle: FileSystemFileHandle;
-  parentDirectory: FileSystemDirectoryHandle;
+  parentDirectory?: FileSystemDirectoryHandle;
   relativePath: string;
 };
 
@@ -214,6 +214,15 @@ export default function Home() {
     await writable.close();
   };
 
+  const overwriteBlobInSourceFile = async (
+    fileHandle: FileSystemFileHandle,
+    blob: Blob,
+  ) => {
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  };
+
   const processItems = async () => {
     if (items.length === 0 || isProcessing) {
       return;
@@ -236,15 +245,15 @@ export default function Home() {
         continue;
       }
 
-      const hasWritePermission = await ensureReadWritePermission(
-        item.parentDirectory,
-      );
+      const permissionHandle = item.parentDirectory ?? item.fileHandle;
+      const hasWritePermission =
+        await ensureReadWritePermission(permissionHandle);
       if (!hasWritePermission) {
         failedCount += 1;
         pushLog({
           file: item.relativePath,
           status: "error",
-          message: "No write permission for target folder.",
+          message: "No write permission for target.",
         });
         continue;
       }
@@ -255,34 +264,46 @@ export default function Home() {
         if (isConvertibleImage) {
           const outputBlob = await convertHeicToJpeg(sourceFile);
           const outputName = replaceExtension(item.fileHandle.name, "jpg");
-          await writeBlobToFile(item.parentDirectory, outputName, outputBlob);
+          if (item.parentDirectory) {
+            await writeBlobToFile(item.parentDirectory, outputName, outputBlob);
 
-          if (outputName !== item.fileHandle.name) {
-            await item.parentDirectory.removeEntry(item.fileHandle.name);
+            if (outputName !== item.fileHandle.name) {
+              await item.parentDirectory.removeEntry(item.fileHandle.name);
+            }
+          } else {
+            await overwriteBlobInSourceFile(item.fileHandle, outputBlob);
           }
 
           convertedCount += 1;
           pushLog({
             file: item.relativePath,
             status: "done",
-            message: `Converted to ${outputName} and replaced original.`,
+            message: item.parentDirectory
+              ? `Converted to ${outputName} and replaced original.`
+              : `Converted content and overwrote original file in place.`,
           });
           continue;
         }
 
         const outputBlob = await convertMovToMp4(sourceFile);
         const outputName = replaceExtension(item.fileHandle.name, "mp4");
-        await writeBlobToFile(item.parentDirectory, outputName, outputBlob);
+        if (item.parentDirectory) {
+          await writeBlobToFile(item.parentDirectory, outputName, outputBlob);
 
-        if (outputName !== item.fileHandle.name) {
-          await item.parentDirectory.removeEntry(item.fileHandle.name);
+          if (outputName !== item.fileHandle.name) {
+            await item.parentDirectory.removeEntry(item.fileHandle.name);
+          }
+        } else {
+          await overwriteBlobInSourceFile(item.fileHandle, outputBlob);
         }
 
         convertedCount += 1;
         pushLog({
           file: item.relativePath,
           status: "done",
-          message: `Converted to ${outputName} and replaced original.`,
+          message: item.parentDirectory
+            ? `Converted to ${outputName} and replaced original.`
+            : `Converted content and overwrote original file in place.`,
         });
       } catch (error) {
         failedCount += 1;
@@ -326,6 +347,27 @@ export default function Home() {
     }
   };
 
+  const selectFiles = async () => {
+    if (typeof window.showOpenFilePicker !== "function") {
+      setSummary("Your browser does not support writable file access.");
+      return;
+    }
+
+    try {
+      const fileHandles = await window.showOpenFilePicker({ multiple: true });
+      const nextItems: ProcessItem[] = fileHandles.map((fileHandle) => ({
+        fileHandle,
+        relativePath: fileHandle.name,
+      }));
+
+      setItems(nextItems);
+      setLogs([]);
+      setSummary(`Loaded ${nextItems.length} file(s).`);
+    } catch {
+      setSummary("File selection cancelled.");
+    }
+  };
+
   const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
@@ -358,7 +400,14 @@ export default function Home() {
           directoryHandle.name,
         );
         nextItems.push(...nestedItems);
+        continue;
       }
+
+      const fileHandle = handle as FileSystemFileHandle;
+      nextItems.push({
+        fileHandle,
+        relativePath: fileHandle.name,
+      });
     }
 
     if (nextItems.length === 0) {
@@ -379,9 +428,9 @@ export default function Home() {
         iPhone Media to Windows Converter
       </h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        Drop folders or select a folder. The app converts HEIC/HEIF/AVIF images
-        to JPG and MOV/M4V/QT videos to MP4, then deletes the original files in
-        place.
+        Drop folders/files or select a folder/files. Folder mode scans
+        subfolders, converts HEIC/HEIF/AVIF images to JPG and MOV/M4V/QT videos
+        to MP4, then replaces originals in place.
       </p>
 
       <div
@@ -397,15 +446,27 @@ export default function Home() {
             : "border-zinc-300 dark:border-zinc-700"
         }`}
       >
-        <p className="text-sm">Drop folders here for in-place conversion</p>
-        <button
-          type="button"
-          onClick={selectFolder}
-          className="mt-4 rounded-md bg-foreground px-4 py-2 text-sm text-background"
-          disabled={isProcessing}
-        >
-          Select Folder
-        </button>
+        <p className="text-sm">
+          Drop folders or files here for in-place conversion
+        </p>
+        <div className="mt-4 flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={selectFolder}
+            className="rounded-md bg-foreground px-4 py-2 text-sm text-background"
+            disabled={isProcessing}
+          >
+            Select Folder
+          </button>
+          <button
+            type="button"
+            onClick={selectFiles}
+            className="rounded-md border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700"
+            disabled={isProcessing}
+          >
+            Select File(s)
+          </button>
+        </div>
       </div>
 
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
