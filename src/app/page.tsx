@@ -353,6 +353,11 @@ export default function Home() {
 
   const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+
+    if (isProcessing) {
+      return;
+    }
+
     setIsDragging(false);
 
     const supportsHandleDrop =
@@ -419,16 +424,25 @@ export default function Home() {
 
       <div
         onDragOver={(event) => {
+          if (isProcessing) {
+            return;
+          }
           event.preventDefault();
           setIsDragging(true);
         }}
-        onDragLeave={() => setIsDragging(false)}
+        onDragLeave={() => {
+          if (isProcessing) {
+            return;
+          }
+          setIsDragging(false);
+        }}
         onDrop={handleDrop}
         className={`rounded-xl border-2 border-dashed p-8 text-center transition ${
           isDragging
             ? "border-foreground"
             : "border-zinc-300 dark:border-zinc-700"
-        }`}
+        } ${isProcessing ? "pointer-events-none opacity-60" : ""}`}
+        aria-disabled={isProcessing}
       >
         <p className="text-sm">
           Drop folders or files here for in-place conversion
