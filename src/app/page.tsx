@@ -7,18 +7,10 @@ type FfmpegInstance = import("@ffmpeg/ffmpeg").FFmpeg;
 type FetchFile = typeof import("@ffmpeg/util").fetchFile;
 type ToBlobURL = typeof import("@ffmpeg/util").toBlobURL;
 
-type ProcessStatus = "idle" | "working" | "done" | "error";
-
 type ProcessItem = {
   fileHandle: FileSystemFileHandle;
   parentDirectory?: FileSystemDirectoryHandle;
   relativePath: string;
-};
-
-type LogEntry = {
-  file: string;
-  status: ProcessStatus;
-  message: string;
 };
 
 const IPHONE_IMAGE_EXTENSIONS = new Set(["heic", "heif", "heics", "avif"]);
@@ -90,8 +82,9 @@ export default function Home() {
   const [items, setItems] = useState<ProcessItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [summary, setSummary] = useState("No folder selected.");
+  const [convertedProgressCount, setConvertedProgressCount] = useState(0);
+  const [progressTargetCount, setProgressTargetCount] = useState(0);
   const ffmpegRef = useRef<FfmpegInstance | null>(null);
   const heic2AnyRef = useRef<Heic2Any | null>(null);
   const ffmpegUtilRef = useRef<{
@@ -112,9 +105,10 @@ export default function Home() {
     [items],
   );
 
-  const pushLog = (entry: LogEntry) => {
-    setLogs((current) => [entry, ...current].slice(0, 250));
-  };
+  const progressPercent =
+    progressTargetCount > 0
+      ? Math.round((convertedProgressCount / progressTargetCount) * 100)
+      : 0;
 
   const loadHeic2Any = async () => {
     if (heic2AnyRef.current) {
@@ -228,8 +222,18 @@ export default function Home() {
       return;
     }
 
+    const totalConvertible = items.filter((item) => {
+      const extension = getExtension(item.fileHandle.name);
+      return (
+        IPHONE_IMAGE_EXTENSIONS.has(extension) ||
+        IPHONE_VIDEO_EXTENSIONS.has(extension)
+      );
+    }).length;
+
     setIsProcessing(true);
     setSummary("Converting files...");
+    setConvertedProgressCount(0);
+    setProgressTargetCount(totalConvertible);
 
     let convertedCount = 0;
     let skippedCount = 0;
@@ -250,11 +254,6 @@ export default function Home() {
         await ensureReadWritePermission(permissionHandle);
       if (!hasWritePermission) {
         failedCount += 1;
-        pushLog({
-          file: item.relativePath,
-          status: "error",
-          message: "No write permission for target.",
-        });
         continue;
       }
 
@@ -275,13 +274,7 @@ export default function Home() {
           }
 
           convertedCount += 1;
-          pushLog({
-            file: item.relativePath,
-            status: "done",
-            message: item.parentDirectory
-              ? `Converted to ${outputName} and replaced original.`
-              : `Converted content and overwrote original file in place.`,
-          });
+          setConvertedProgressCount(convertedCount);
           continue;
         }
 
@@ -298,21 +291,9 @@ export default function Home() {
         }
 
         convertedCount += 1;
-        pushLog({
-          file: item.relativePath,
-          status: "done",
-          message: item.parentDirectory
-            ? `Converted to ${outputName} and replaced original.`
-            : `Converted content and overwrote original file in place.`,
-        });
+        setConvertedProgressCount(convertedCount);
       } catch (error) {
         failedCount += 1;
-        pushLog({
-          file: item.relativePath,
-          status: "error",
-          message:
-            error instanceof Error ? error.message : "Conversion failed.",
-        });
       }
     }
 
@@ -340,7 +321,8 @@ export default function Home() {
       const collectedItems =
         await collectProcessItemsFromDirectory(directoryHandle);
       setItems(collectedItems);
-      setLogs([]);
+      setConvertedProgressCount(0);
+      setProgressTargetCount(0);
       setSummary(`Loaded ${collectedItems.length} files from selected folder.`);
     } catch {
       setSummary("Folder selection cancelled.");
@@ -361,7 +343,8 @@ export default function Home() {
       }));
 
       setItems(nextItems);
-      setLogs([]);
+      setConvertedProgressCount(0);
+      setProgressTargetCount(0);
       setSummary(`Loaded ${nextItems.length} file(s).`);
     } catch {
       setSummary("File selection cancelled.");
@@ -418,7 +401,8 @@ export default function Home() {
     }
 
     setItems(nextItems);
-    setLogs([]);
+    setConvertedProgressCount(0);
+    setProgressTargetCount(0);
     setSummary(`Loaded ${nextItems.length} files from dropped folders.`);
   };
 
@@ -486,18 +470,14 @@ export default function Home() {
       </div>
 
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-medium">Activity</h2>
-        <ul className="mt-3 max-h-72 space-y-2 overflow-auto text-sm">
-          {logs.length === 0 && (
-            <li className="text-zinc-500">No activity yet.</li>
-          )}
-          {logs.map((log, index) => (
-            <li key={`${log.file}-${index}`}>
-              <span className="font-medium">{log.file}</span>
-              <span className="text-zinc-500"> — {log.message}</span>
-            </li>
-          ))}
-        </ul>
+        <h2 className="text-sm font-medium">Progress</h2>
+        <p className="mt-3 text-sm">
+          {convertedProgressCount} / {progressTargetCount || supportedCount}{" "}
+          converted
+        </p>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          {progressPercent}%
+        </p>
       </div>
     </div>
   );
